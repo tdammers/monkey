@@ -77,12 +77,18 @@ data CreateResult
   | InvalidItemNotCreated -- ^ not created due to invalid data
   | ConflictingItemNotCreated -- ^ not created due to constraint conflict
 
+data StoreResult
+  = Stored -- ^ stored
+  | InvalidItemNotStored -- ^ not stored due to invalid data
+  | ConflictingItemNotStored -- ^ not stored due to constraint conflict
+
 data Resource =
   Resource
     { subResources :: View -> IO [(Text, Resource)]
     , getSelf :: IO (Maybe Value)
     , delete :: IO DeleteResult
     , create :: Value -> IO CreateResult
+    , store :: Text -> Value -> IO StoreResult
     }
 
 resolveResource :: Path -> API -> IO (Maybe Resource)
@@ -169,6 +175,26 @@ postResource r rq respond = do
         ConflictingItemNotCreated ->
           conflictingRequest rq respond
 
+putResource :: Text -> Resource -> Application
+putResource key r rq respond = do
+  mValue <- JSON.decode <$> lazyRequestBody rq
+  case mValue of
+    Nothing ->
+      badRequest rq respond
+    Just value -> do
+      result <- store r key value
+      case result of
+        Stored ->
+          respond $
+            responseLBS
+              noContent204
+              []
+              ""
+        InvalidItemNotStored ->
+          badRequest rq respond
+        ConflictingItemNotStored ->
+          conflictingRequest rq respond
+
 deleteResource :: Resource -> Application
 deleteResource r rq respond = do
   result <- delete r
@@ -246,7 +272,15 @@ apiToApp api rq respond
           (notFound rq respond)
           (\r -> postResource r rq respond)
           mResource
+      "PUT" -> do
+        let p = pathInfo rq
+        mResource <- resolveResource (init p) api
+        maybe
+          (notFound rq respond)
+          (\r -> putResource (last p) r rq respond)
+          mResource
       _ -> invalidMethod rq respond
+
 
 responseJSON :: ToJSON a => Status -> a -> Response
 responseJSON status x =
