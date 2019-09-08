@@ -1,0 +1,6 @@
+.stack-work/
+.cabal-sandbox/
+*~
+.*.sw[op]
+tags
+dist-newstyle
