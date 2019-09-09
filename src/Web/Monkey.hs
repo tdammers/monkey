@@ -76,11 +76,13 @@ data CreateResult
   = Created Text -- ^ created with ID
   | InvalidItemNotCreated -- ^ not created due to invalid data
   | ConflictingItemNotCreated -- ^ not created due to constraint conflict
+  | CreateNotSupported -- ^ creating subresources not supported
 
 data StoreResult
   = Stored -- ^ stored
   | InvalidItemNotStored -- ^ not stored due to invalid data
   | ConflictingItemNotStored -- ^ not stored due to constraint conflict
+  | StoreNotSupported -- ^ updates not supported
 
 data Resource =
   Resource
@@ -89,6 +91,18 @@ data Resource =
     , delete :: IO DeleteResult
     , create :: Value -> IO CreateResult
     , store :: Text -> Value -> IO StoreResult
+    }
+
+-- | A default Resource that has no item data of its own, no subresources, and
+-- doesn't support any methods except GET.
+defaultResource :: Resource
+defaultResource =
+  Resource
+    { subResources = const . pure $ []
+    , getSelf = pure Nothing
+    , delete = pure DeleteNotSupported
+    , create = const . pure $ CreateNotSupported
+    , store = const . const . pure $ StoreNotSupported
     }
 
 resolveResource :: Path -> API -> IO (Maybe Resource)
@@ -112,6 +126,7 @@ decorateResource path resource = do
   item <- getSelf resource
   let obj = case item of
         Just (JSON.Object o) -> o
+        Just JSON.Null -> []
         Just x -> [("item", x)]
         Nothing -> []
   children <- subResources resource defaultView
@@ -174,6 +189,8 @@ postResource r rq respond = do
           badRequest rq respond
         ConflictingItemNotCreated ->
           conflictingRequest rq respond
+        CreateNotSupported ->
+          invalidMethod rq respond
 
 putResource :: Text -> Resource -> Application
 putResource key r rq respond = do
@@ -194,6 +211,8 @@ putResource key r rq respond = do
           badRequest rq respond
         ConflictingItemNotStored ->
           conflictingRequest rq respond
+        StoreNotSupported ->
+          invalidMethod rq respond
 
 deleteResource :: Resource -> Application
 deleteResource r rq respond = do
@@ -243,6 +262,7 @@ conflictingRequest rq respond =
 
 apiToApp :: API -> Application
 apiToApp api rq respond
+  -- The root resource.
   | pathInfo rq == []
   = case requestMethod rq of
       "GET" -> do
@@ -251,6 +271,7 @@ apiToApp api rq respond
           responseJSON
             ok200
             body
+      _ -> invalidMethod rq respond
 apiToApp api rq respond 
   | otherwise
   = case requestMethod rq of
